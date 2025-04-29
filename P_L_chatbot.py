@@ -617,6 +617,10 @@ else:
     # --- Data Loading and Preparation Cache ---
     @st.cache_data
     def load_and_prepare_data():
+        # Return cached data if already processed
+        if 'pl_data' in st.session_state and st.session_state['pl_data'] is not None:
+            return st.session_state['pl_data']
+        
         pl_data = {}
         pos_orders_data_2025 = None
         pl_combined_data = None
@@ -648,6 +652,8 @@ else:
                 pl_combined = pd.merge(df_details, df_mapping, on='Level1', how='left')
                 if 'UnitId' in pl_combined.columns and 'UnitId' in df_units.columns:
                     pl_combined_data = pd.merge(pl_combined, df_units[['UnitId', 'UnitName']], on='UnitId', how='left')
+                    # Store in session state for future use
+                    st.session_state['pl_data'] = pl_combined_data
                 else:
                     st.error("Error merging P&L data: Unit ID mismatch.")
                     pl_combined_data = None
@@ -678,7 +684,16 @@ else:
     def run_openai_analysis(df, prompt, api_key, model, show_thinking=True):
         if df is None:
             st.error("P&L data not loaded. Cannot run analysis.")
-            return
+            if 'pl_data' in st.session_state:
+                # Try to recover from session state if available
+                df = st.session_state['pl_data']
+                if df is not None:
+                    st.info("Recovered data from previous session. Proceeding with analysis.")
+                else:
+                    return
+            else:
+                return
+        
         if not api_key:
             st.error("OpenAI API Key not provided. Please enter it in the sidebar.")
             return
@@ -1011,6 +1026,7 @@ Be direct and business-focused in your analysis. Clearly label insights and reco
     st.markdown("<h2 class='results-header'>Analysis Output Section</h2>", unsafe_allow_html=True)
 
     # Create a designated results area (container instead of empty)
+    # Reinitialize for each new session to avoid stale references
     st.session_state.results_area = st.container()
 
     # --- Button Click Logic ---
@@ -1022,7 +1038,11 @@ Be direct and business-focused in your analysis. Clearly label insights and reco
         
         # Mark that initial display should be hidden
         st.session_state['initial_display'] = False
-
+        
+        # Store data in session state to ensure it persists between runs
+        if 'pl_data' not in st.session_state:
+            st.session_state['pl_data'] = pl_combined_data
+        
         # Call the analysis function
         run_openai_analysis(
             df=pl_combined_data,
