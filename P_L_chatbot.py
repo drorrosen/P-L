@@ -638,6 +638,11 @@ else:
             st.error(f"Error reading Excel file {excel_file_path}: {e}")
             return None
 
+        # Check if POS data is uploaded and available
+        if 'pos_orders_data_2025' in st.session_state and st.session_state.pos_orders_data_2025 is not None:
+            pos_orders_data_2025 = st.session_state.pos_orders_data_2025
+            st.info("✓ Using uploaded POS Orders Data for enhanced analysis")
+
         # Data Preparation: Combine P&L Sheets
         try:
             if 'P&L_Details' in pl_data and 'P&L_Mapping' in pl_data and 'P&L_Units' in pl_data:
@@ -652,6 +657,14 @@ else:
                 pl_combined = pd.merge(df_details, df_mapping, on='Level1', how='left')
                 if 'UnitId' in pl_combined.columns and 'UnitId' in df_units.columns:
                     pl_combined_data = pd.merge(pl_combined, df_units[['UnitId', 'UnitName']], on='UnitId', how='left')
+                    
+                    # If POS data is available, add a flag to indicate it's available for analysis
+                    if pos_orders_data_2025 is not None:
+                        # Store POS data in session state for use in analysis
+                        st.session_state['pos_orders_data_2025'] = pos_orders_data_2025
+                        # Add a flag to the combined data indicating POS data is available
+                        st.session_state['pos_data_available'] = True
+                    
                     # Store in session state for future use
                     st.session_state['pl_data'] = pl_combined_data
                 else:
@@ -716,6 +729,7 @@ else:
         thinking_placeholder = progress_container.empty() if show_thinking else None
         
         file_id = None
+        pos_file_id = None  # For POS data if available
         assistant_id = None
         thread_id = None
         thinking_steps = []
@@ -727,28 +741,63 @@ else:
             if show_thinking:
                 thinking_steps.append(("Data Preparation", "Converting P&L data to CSV format..."))
                 display_thinking_process(thinking_placeholder, thinking_steps)
+            
+            # Prepare and upload P&L data
             csv_data = df.to_csv(index=False)
             file_bytes = io.BytesIO(csv_data.encode('utf-8'))
             if show_thinking:
-                thinking_steps.append(("Data Upload", "Sending data to OpenAI..."))
+                thinking_steps.append(("Data Upload", "Sending P&L data to OpenAI..."))
                 display_thinking_process(thinking_placeholder, thinking_steps)
             file_response = client.files.create(file=file_bytes, purpose="assistants")
             file_id = file_response.id
-            status_placeholder.info("✅ Data Uploaded. Initializing Analyst...")
+            
+            # Check if POS data is available and upload it as well
+            pos_data_available = st.session_state.get('pos_data_available', False)
+            if pos_data_available and 'pos_orders_data_2025' in st.session_state:
+                if show_thinking:
+                    thinking_steps.append(("Additional Data", "Preparing POS Orders data..."))
+                    display_thinking_process(thinking_placeholder, thinking_steps)
+                
+                pos_data = st.session_state['pos_orders_data_2025']
+                pos_csv_data = pos_data.to_csv(index=False)
+                pos_file_bytes = io.BytesIO(pos_csv_data.encode('utf-8'))
+                
+                if show_thinking:
+                    thinking_steps.append(("Data Upload", "Sending POS Orders data to OpenAI..."))
+                    display_thinking_process(thinking_placeholder, thinking_steps)
+                
+                pos_file_response = client.files.create(file=pos_file_bytes, purpose="assistants")
+                pos_file_id = pos_file_response.id
+                status_placeholder.info("✅ P&L and POS Data Uploaded. Initializing Analyst...")
+            else:
+                status_placeholder.info("✅ P&L Data Uploaded. Initializing Analyst...")
+            
             time.sleep(0.5)
 
             # Step 2: Create Assistant
             if show_thinking:
                 thinking_steps.append(("Assistant Setup", f"Initializing AI Analyst ({model})..."))
                 display_thinking_process(thinking_placeholder, thinking_steps)
-            assistant = client.beta.assistants.create(
-                name="Financial Analysis Expert",
-                instructions="""You are an expert financial analyst specializing in P&L statements. 
+            
+            # Update instructions based on whether POS data is available
+            instructions_base = """You are an expert financial analyst specializing in P&L statements. 
                 Analyze the data thoroughly but provide concise, business-focused insights. 
                 Use visualizations strategically to highlight key trends and patterns.
                 Always highlight subsidy-related insights as they're of particular importance.
                 Present your analysis in a structured format with clear section headers.
-                Focus on actionable recommendations based on the data.""",
+                Focus on actionable recommendations based on the data."""
+            
+            if pos_data_available:
+                instructions = instructions_base + """
+                Additionally, you have access to POS (Point of Sale) Orders data that you can use to enrich your analysis.
+                This data can help correlate sales performance with P&L metrics to provide deeper insights.
+                When applicable, integrate POS data into your analysis to identify relationships between ordering patterns and financial performance."""
+            else:
+                instructions = instructions_base
+            
+            assistant = client.beta.assistants.create(
+                name="Financial Analysis Expert",
+                instructions=instructions,
                 model=model,
                 tools=[{"type": "code_interpreter"}]
             )
@@ -763,16 +812,34 @@ else:
             thread = client.beta.threads.create()
             thread_id = thread.id
             status_placeholder.info("✅ Thread Created. Sending request...")
+            time.sleep(0.5)
 
             # Step 4: Add Message and Run
             if show_thinking:
                 thinking_steps.append(("Query Processing", f"Sending analysis request: '{prompt[:100]}...'"))
                 display_thinking_process(thinking_placeholder, thinking_steps)
+            
+            # Update prompt if POS data is available
+            if pos_data_available:
+                enhanced_prompt = f"{prompt}\n\nNote: POS (Point of Sale) Orders data is also available for this analysis. Please incorporate this data where relevant."
+            else:
+                enhanced_prompt = prompt
+            
+            # Create message with P&L data attachment
+            message_attachments = [{"file_id": file_id, "tools": [{"type": "code_interpreter"}]}]
+            
+            # Add POS data attachment if available
+            if pos_file_id is not None:
+                message_attachments.append({"file_id": pos_file_id, "tools": [{"type": "code_interpreter"}]})
+                if show_thinking:
+                    thinking_steps.append(("Data Integration", "Including both P&L and POS data in analysis..."))
+                    display_thinking_process(thinking_placeholder, thinking_steps)
+            
             message = client.beta.threads.messages.create(
                 thread_id=thread.id,
                 role="user",
-                content=[{"type": "text", "text": prompt}],
-                attachments=[{"file_id": file_id, "tools": [{"type": "code_interpreter"}]}]
+                content=[{"type": "text", "text": enhanced_prompt}],
+                attachments=message_attachments
             )
             run = client.beta.threads.runs.create(
                 thread_id=thread.id,
@@ -881,6 +948,9 @@ else:
             try:
                 if file_id: client.files.delete(file_id)
             except Exception as clean_e: print(f"Could not delete file: {clean_e}")
+            try:
+                if pos_file_id: client.files.delete(pos_file_id)
+            except Exception as clean_e: print(f"Could not delete POS data file: {clean_e}")
 
 
     # --- Sidebar Settings ---
@@ -898,6 +968,32 @@ else:
         )
         if api_key_input != st.session_state.openai_key:
             st.session_state.openai_key = api_key_input
+        
+        # POS Data File Upload Section
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<h4>POS Orders Data</h4>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:0.9rem; color:#516f90;'>Upload the POS_Orders_Data_2025 file here (Excel format)</p>", unsafe_allow_html=True)
+        
+        pos_data_file = st.file_uploader(
+            "Upload POS_Orders_Data_2025.xlsx",
+            type=["xlsx", "xls"],
+            key="pos_data_uploader",
+            help="This file contains point-of-sale order data needed for complete analysis"
+        )
+        
+        if pos_data_file is not None:
+            # Save the file to session state for use in analysis
+            if 'pos_data_file' not in st.session_state or st.session_state.pos_data_file != pos_data_file:
+                st.session_state.pos_data_file = pos_data_file
+                # Read and store the data
+                try:
+                    pos_data = pd.read_excel(pos_data_file)
+                    st.session_state.pos_orders_data_2025 = pos_data
+                    st.success(f"✅ Successfully loaded POS data: {pos_data_file.name} ({pos_data.shape[0]} rows, {pos_data.shape[1]} columns)")
+                except Exception as e:
+                    st.error(f"Error reading POS data file: {e}")
+        
+        st.markdown("<hr>", unsafe_allow_html=True)
 
         # Model selection
         st.markdown("<h4>Model Selection</h4>", unsafe_allow_html=True)
