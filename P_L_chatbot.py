@@ -625,21 +625,17 @@ else:
         pos_orders_data_2025 = None
         pl_combined_data = None
 
-        # Check if P&L data file has been uploaded
-        if 'pl_data_file' not in st.session_state or st.session_state.pl_data_file is None:
-            st.warning("🔍 Please upload the P&L data file (PL_Data(Jan2023-March2025).xlsx) in the sidebar.")
-            return None
-
-        # Load data from the uploaded file
         try:
-            pl_data_file = st.session_state.pl_data_file
-            excel_file = pd.ExcelFile(pl_data_file)
+            excel_file_path = "PL_Data(Jan2023-March2025).xlsx"
+            excel_file = pd.ExcelFile(excel_file_path)
             sheet_names = excel_file.sheet_names
             for sheet in sheet_names:
                 pl_data[sheet] = excel_file.parse(sheet)
-            st.success(f"✅ Successfully read {len(sheet_names)} sheets from P&L data file.")
+        except FileNotFoundError:
+            st.error(f"Error: {excel_file_path} not found. Please ensure the file is in the correct directory.")
+            return None
         except Exception as e:
-            st.error(f"Error reading P&L data file: {e}")
+            st.error(f"Error reading Excel file {excel_file_path}: {e}")
             return None
 
         # Check if POS data is uploaded and available
@@ -675,9 +671,7 @@ else:
                     st.error("Error merging P&L data: Unit ID mismatch.")
                     pl_combined_data = None
             else:
-                st.error("Error: One or more required P&L sheets not found. Required sheets: P&L_Details, P&L_Mapping, P&L_Units")
-                if sheet_names:
-                    st.info(f"Available sheets in the uploaded file: {', '.join(sheet_names)}")
+                st.error("Error: One or more required P&L sheets not found.")
                 pl_combined_data = None
         except Exception as e:
             st.error(f"An error occurred during data preparation: {e}")
@@ -975,36 +969,16 @@ else:
         if api_key_input != st.session_state.openai_key:
             st.session_state.openai_key = api_key_input
         
-        # Data File Upload Section
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<h4>Required Data Files</h4>", unsafe_allow_html=True)
-        
-        # P&L Data File Uploader
-        st.markdown("<p style='font-size:0.9rem; color:#516f90;'><strong>1. P&L Data File</strong> (Required)</p>", unsafe_allow_html=True)
-        pl_data_file = st.file_uploader(
-            "Upload PL_Data(Jan2023-March2025).xlsx",
-            type=["xlsx", "xls"],
-            key="pl_data_uploader",
-            help="This is the main P&L data file containing financial data needed for analysis"
-        )
-        
-        if pl_data_file is not None:
-            # Save the file to session state for use in analysis
-            if 'pl_data_file' not in st.session_state or st.session_state.pl_data_file != pl_data_file:
-                st.session_state.pl_data_file = pl_data_file
-                # Read and store the data - will be processed in the load_and_prepare_data function
-                st.success(f"✅ P&L data file uploaded: {pl_data_file.name}")
-                # Reset cached data to ensure new file is processed
-                if 'pl_data' in st.session_state:
-                    del st.session_state['pl_data']
-        
         # POS Data File Upload Section
-        st.markdown("<p style='font-size:0.9rem; color:#516f90; margin-top:1rem;'><strong>2. POS Orders Data</strong> (Optional but recommended)</p>", unsafe_allow_html=True)
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("<h4>POS Orders Data</h4>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:0.9rem; color:#516f90;'>Upload the POS_Orders_Data_2025 file here (Excel format)</p>", unsafe_allow_html=True)
+        
         pos_data_file = st.file_uploader(
             "Upload POS_Orders_Data_2025.xlsx",
             type=["xlsx", "xls"],
             key="pos_data_uploader",
-            help="This file contains point-of-sale order data to enhance analysis with sales details"
+            help="This file contains point-of-sale order data needed for complete analysis"
         )
         
         if pos_data_file is not None:
@@ -1015,7 +989,7 @@ else:
                 try:
                     pos_data = pd.read_excel(pos_data_file)
                     st.session_state.pos_orders_data_2025 = pos_data
-                    st.success(f"✅ POS data loaded: {pos_data_file.name} ({pos_data.shape[0]} rows, {pos_data.shape[1]} columns)")
+                    st.success(f"✅ Successfully loaded POS data: {pos_data_file.name} ({pos_data.shape[0]} rows, {pos_data.shape[1]} columns)")
                 except Exception as e:
                     st.error(f"Error reading POS data file: {e}")
         
@@ -1101,132 +1075,111 @@ Be direct and business-focused in your analysis. Clearly label insights and reco
     # === Main Application Interface ===
     # Wrap input section in a card, similar to code_interpreter_app
     st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<h2>Ask a Specific Financial Question</h2>", unsafe_allow_html=True) 
+    st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Enter a specific question about your P&L data, or leave blank to run the general analysis based on sidebar instructions.</p>", unsafe_allow_html=True)
 
-    # Check if P&L data file has been uploaded
-    if 'pl_data_file' not in st.session_state or st.session_state.pl_data_file is None:
-        st.markdown("<h2>Upload Required Data</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Please upload the <strong>P&L Data file</strong> in the sidebar to continue. The file is required to perform financial analysis.</p>", unsafe_allow_html=True)
-        
-        # Add helper information
-        st.info("📄 The P&L Data file (PL_Data(Jan2023-March2025).xlsx) contains the financial data needed for analysis.")
-        
-        # Show a visual arrow/indicator pointing to the sidebar
+    # Specific question input
+    specific_question = st.text_area(
+        "Your specific question:", 
+        placeholder="E.g., 'Compare Q2 to Q1 sales and subsidy' or 'Highest labor costs month?'",
+        value=st.session_state.specific_question,
+        height=100,  # Set appropriate height for multiple lines
+        key="specific_question_input"
+    )
+
+    # Save to session state when changed
+    if specific_question != st.session_state.specific_question:
+        st.session_state.specific_question = specific_question
+
+    # Example questions
+    st.markdown("<h5 style='font-size: 1rem; font-weight: 600; color: #516f90; margin-top: 1rem; margin-bottom: 0.5rem;'>Example Questions:</h5>", unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
         st.markdown("""
-        <div style="text-align: center; margin-top: 2rem;">
-            <div style="font-size: 2rem; color: #ff7a59;">👈</div>
-            <p style="color: #516f90;">Upload your data in the sidebar</p>
-        </div>
+        <ul style="font-size: 0.9rem; color: #5a6e84; padding-left: 1.2rem; margin-top: 0; margin-bottom: 1rem;">
+            <li style="margin-bottom: 0.3rem;">Compare Q2 to Q1 for total sales and <span class='highlight-subsidy'>subsidy</span>.</li>
+            <li style="margin-bottom: 0.3rem;">What were the top 3 OPEX categories last month?</li>
+        </ul>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <ul style="font-size: 0.9rem; color: #5a6e84; padding-left: 1.2rem; margin-top: 0; margin-bottom: 1rem;">
+            <li style="margin-bottom: 0.3rem;">Show food cost as % of sales over the last 12 months.</li>
+            <li style="margin-bottom: 0.3rem;">Which month had the highest labor-to-sales ratio?</li>
+        </ul>
         """, unsafe_allow_html=True)
 
-    else:
-        # Show the normal interface when P&L data is available
-        st.markdown("<h2>Ask a Specific Financial Question</h2>", unsafe_allow_html=True) 
-        st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Enter a specific question about your P&L data, or leave blank to run the general analysis based on sidebar instructions.</p>", unsafe_allow_html=True)
-
-        # Specific question input
-        specific_question = st.text_area(
-            "Your specific question:", 
-            placeholder="E.g., 'Compare Q2 to Q1 sales and subsidy' or 'Highest labor costs month?'",
-            value=st.session_state.specific_question,
-            height=100,  # Set appropriate height for multiple lines
-            key="specific_question_input"
-        )
-
-        # Save to session state when changed
-        if specific_question != st.session_state.specific_question:
-            st.session_state.specific_question = specific_question
-
-        # Example questions
-        st.markdown("<h5 style='font-size: 1rem; font-weight: 600; color: #516f90; margin-top: 1rem; margin-bottom: 0.5rem;'>Example Questions:</h5>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("""
-            <ul style="font-size: 0.9rem; color: #5a6e84; padding-left: 1.2rem; margin-top: 0; margin-bottom: 1rem;">
-                <li style="margin-bottom: 0.3rem;">Compare Q2 to Q1 for total sales and <span class='highlight-subsidy'>subsidy</span>.</li>
-                <li style="margin-bottom: 0.3rem;">What were the top 3 OPEX categories last month?</li>
-            </ul>
-            """, unsafe_allow_html=True)
-        with col2:
-            st.markdown("""
-            <ul style="font-size: 0.9rem; color: #5a6e84; padding-left: 1.2rem; margin-top: 0; margin-bottom: 1rem;">
-                <li style="margin-bottom: 0.3rem;">Show food cost as % of sales over the last 12 months.</li>
-                <li style="margin-bottom: 0.3rem;">Which month had the highest labor-to-sales ratio?</li>
-            </ul>
-            """, unsafe_allow_html=True)
-
-        # Run analysis button
-        st.markdown("<div style='margin-top: 1rem;'>", unsafe_allow_html=True)
-        analyze_button = st.button("🚀 Run Financial Analysis", use_container_width=True, key="run_analysis_button")
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Run analysis button
+    st.markdown("<div style='margin-top: 1rem;'>", unsafe_allow_html=True)
+    analyze_button = st.button("🚀 Run Financial Analysis", use_container_width=True, key="run_analysis_button")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Close the input card
     st.markdown("</div>", unsafe_allow_html=True) 
 
     # --- Analysis Output Section ---
     # Create a header for the results section
-    if 'pl_data_file' in st.session_state and st.session_state.pl_data_file is not None:
-        st.markdown("<h2 class='results-header'>Analysis Output Section</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='results-header'>Analysis Output Section</h2>", unsafe_allow_html=True)
 
-        # Create a designated results area (container instead of empty)
-        # Reinitialize for each new session to avoid stale references
-        st.session_state.results_area = st.container()
+    # Create a designated results area (container instead of empty)
+    # Reinitialize for each new session to avoid stale references
+    st.session_state.results_area = st.container()
 
-        # --- Button Click Logic ---
-        if analyze_button:
-            # Prepare the final prompt
-            final_prompt = st.session_state.analysis_prompt
-            if specific_question:
-                final_prompt += f"\n\nSPECIFIC QUESTION TO FOCUS ON: {specific_question}"
-            
-            # Mark that initial display should be hidden
-            st.session_state['initial_display'] = False
-            
-            # Store data in session state to ensure it persists between runs
-            if 'pl_data' not in st.session_state:
-                st.session_state['pl_data'] = pl_combined_data
-            
-            # Call the analysis function
-            run_openai_analysis(
-                df=pl_combined_data,
-                prompt=final_prompt,
-                api_key=st.session_state.openai_key,
-                model=st.session_state.model_choice,
-                show_thinking=show_thinking
-            )
+    # --- Button Click Logic ---
+    if analyze_button:
+        # Prepare the final prompt
+        final_prompt = st.session_state.analysis_prompt
+        if specific_question:
+            final_prompt += f"\n\nSPECIFIC QUESTION TO FOCUS ON: {specific_question}"
+        
+        # Mark that initial display should be hidden
+        st.session_state['initial_display'] = False
+        
+        # Store data in session state to ensure it persists between runs
+        if 'pl_data' not in st.session_state:
+            st.session_state['pl_data'] = pl_combined_data
+        
+        # Call the analysis function
+        run_openai_analysis(
+            df=pl_combined_data,
+            prompt=final_prompt,
+            api_key=st.session_state.openai_key,
+            model=st.session_state.model_choice,
+            show_thinking=show_thinking
+        )
 
-        # Display initial state (data overview or error) in the results_area
-        elif pl_combined_data is not None and st.session_state.get('initial_display', True):
-            # Display initial overview in the results area
-            with st.session_state.results_area:
-                # Wrap initial overview in a card
-                st.markdown("<div class='results-card'>", unsafe_allow_html=True)
-                st.markdown("<h3>P&L Data Overview</h3>", unsafe_allow_html=True)
-                st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Data loaded successfully. Ask a specific question above or click 'Run Financial Analysis' to generate insights.</p>", unsafe_allow_html=True)
-                st.dataframe(pl_combined_data.head(), use_container_width=True)
+    # Display initial state (data overview or error) in the results_area
+    elif pl_combined_data is not None and st.session_state.get('initial_display', True):
+        # Display initial overview in the results area
+        with st.session_state.results_area:
+            # Wrap initial overview in a card
+            st.markdown("<div class='results-card'>", unsafe_allow_html=True)
+            st.markdown("<h3>P&L Data Overview</h3>", unsafe_allow_html=True)
+            st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Data loaded successfully. Ask a specific question above or click 'Run Financial Analysis' to generate insights.</p>", unsafe_allow_html=True)
+            st.dataframe(pl_combined_data.head(), use_container_width=True)
 
-                # Show summary stats
-                st.markdown("<h4 style='font-size: 1.1rem; font-weight: 600; color: #33475b; margin-top: 1.5rem; margin-bottom: 0.8rem;'>Data Summary</h4>", unsafe_allow_html=True)
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    total_units = pl_combined_data['UnitId'].nunique()
-                    st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_units}</div><div class='kpi-label'>Total Units</div></div>", unsafe_allow_html=True)
-                with col2:
-                    min_date = pl_combined_data['Month'].min().strftime('%b %Y')
-                    max_date = pl_combined_data['Month'].max().strftime('%b %Y')
-                    date_range = f"{min_date} - {max_date}"
-                    st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{date_range}</div><div class='kpi-label'>Date Range</div></div>", unsafe_allow_html=True)
-                with col3:
-                    total_rows = len(pl_combined_data)
-                    st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_rows:,}</div><div class='kpi-label'>Total Records</div></div>", unsafe_allow_html=True)
-                # Close the initial overview card
-                st.markdown("</div>", unsafe_allow_html=True)
+            # Show summary stats
+            st.markdown("<h4 style='font-size: 1.1rem; font-weight: 600; color: #33475b; margin-top: 1.5rem; margin-bottom: 0.8rem;'>Data Summary</h4>", unsafe_allow_html=True)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_units = pl_combined_data['UnitId'].nunique()
+                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_units}</div><div class='kpi-label'>Total Units</div></div>", unsafe_allow_html=True)
+            with col2:
+                min_date = pl_combined_data['Month'].min().strftime('%b %Y')
+                max_date = pl_combined_data['Month'].max().strftime('%b %Y')
+                date_range = f"{min_date} - {max_date}"
+                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{date_range}</div><div class='kpi-label'>Date Range</div></div>", unsafe_allow_html=True)
+            with col3:
+                total_rows = len(pl_combined_data)
+                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_rows:,}</div><div class='kpi-label'>Total Records</div></div>", unsafe_allow_html=True)
+            # Close the initial overview card
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        # Handle data loading failure state
-        elif pl_combined_data is None:
-            with st.session_state.results_area:
-                st.error("Data could not be loaded or prepared. Please check the P&L file format and ensure it contains the required sheets: P&L_Details, P&L_Mapping, and P&L_Units.")
-                # Add a tip about expected file format
-                st.info("The P&L data file should be an Excel file with multiple sheets including P&L_Details, P&L_Mapping, and P&L_Units. Please ensure your file matches this structure.")
+    # Handle data loading failure state
+    elif pl_combined_data is None:
+        with st.session_state.results_area:
+            st.error("Data could not be loaded or prepared. Please check the P&L files and ensure they are accessible.")
+
 
     # --- Footer ---
     st.markdown("<div class='footer'>© 2025 omniXM Financial Insights | <span style='color:#ff7a59; font-weight:500;'>Measure</span> & <span style='font-weight:500;'>Manage</span> Every Financial Experience</div>", unsafe_allow_html=True)
