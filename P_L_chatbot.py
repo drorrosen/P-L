@@ -383,8 +383,26 @@ def verify_excel_file(uploaded_file):
     except Exception as e:
         return False, f"Error reading file: {str(e)}", None
 
+# Helper function to load POS data with caching
+@st.cache_data(ttl=3600)
+def load_pos_data():
+    """Load POS data with caching for improved performance"""
+    try:
+        # Prefer CSV format as it's usually faster to load
+        pos_file_path = "POS_Orders_Data_2025.csv"
+        return pd.read_csv(pos_file_path)
+    except Exception:
+        try:
+            # Fall back to Excel if CSV not available
+            pos_file_path = "POS_Orders_Data_2025.xlsx"
+            return pd.read_excel(pos_file_path)
+        except Exception as e:
+            # Silently log error instead of displaying warning
+            print(f"Could not load POS data: {e}")
+            return None
+
 # --- Data Loading and Preparation Cache ---
-@st.cache_data
+@st.cache_data(ttl=3600)  # Cache data for 1 hour to improve performance
 def load_and_prepare_data():
     # Return cached data if already processed
     if 'pl_data' in st.session_state and st.session_state['pl_data'] is not None:
@@ -397,72 +415,54 @@ def load_and_prepare_data():
     # First try to read the file directly from filesystem
     try:
         excel_file_path = "PL_Data(Jan2023-March2025).xlsx"
-        st.info(f"Attempting to load data from file: {excel_file_path}")
+        # Silently load data without displaying info messages
         excel_file = pd.ExcelFile(excel_file_path)
         sheet_names = excel_file.sheet_names
         
-        st.write("Sheets found in the file:", sheet_names)
+        # Process sheets silently
         for sheet in sheet_names:
             pl_data[sheet] = excel_file.parse(sheet)
-        
-        st.success(f"✅ Successfully read {len(sheet_names)} sheets from P&L data file.")
     except FileNotFoundError:
-        st.warning(f"File not found in directory: {excel_file_path}")
-        
+        # Silent handling of file not found
         # Fall back to using uploaded file if available
         if 'pl_data_file' in st.session_state and st.session_state.pl_data_file is not None:
             try:
                 pl_data_file = st.session_state.pl_data_file
-                st.info(f"Falling back to uploaded file: {pl_data_file.name}")
-                
-                # Read the uploaded file
+                # Silently process uploaded file
                 file_data = pl_data_file.getvalue()
                 excel_file = pd.ExcelFile(io.BytesIO(file_data))
                 sheet_names = excel_file.sheet_names
                 
                 for sheet in sheet_names:
                     pl_data[sheet] = excel_file.parse(sheet)
-                st.success(f"✅ Successfully read {len(sheet_names)} sheets from uploaded P&L data file.")
             except Exception as e:
-                st.error(f"Error reading uploaded P&L data file: {e}")
+                # Log error to console instead of showing in UI
+                print(f"Error reading uploaded P&L data file: {e}")
                 return None
         else:
-            st.error("P&L data file not found in directory and no file was uploaded.")
+            # Log error to console instead of showing in UI
+            print("P&L data file not found in directory and no file was uploaded.")
             return None
     except Exception as e:
-        st.error(f"Error reading P&L data file: {e}")
+        # Log error to console instead of showing in UI
+        print(f"Error reading P&L data file: {e}")
         return None
 
     # --- Old POS data check (remove) ---
     # Check if POS data is uploaded and available
     if 'pos_orders_data_2025' in st.session_state and st.session_state.pos_orders_data_2025 is not None:
         pos_orders_data_2025 = st.session_state.pos_orders_data_2025
-        st.info("✓ Using uploaded POS Orders Data for enhanced analysis")
     # --- End old POS data check ---
 
-    # Load POS data from file
-    try:
-        # Try loading CSV first
-        pos_file_path = "POS_Orders_Data_2025.csv"
-        st.info(f"Loading POS data from file: {pos_file_path}")
-        pos_orders_data_2025 = pd.read_csv(pos_file_path)
-        st.success(f"✅ Successfully loaded POS data from CSV file")
+    # Load POS data using the cached function
+    pos_orders_data_2025 = load_pos_data()
+    if pos_orders_data_2025 is not None:
         # Set flag indicating POS data is available
         st.session_state['pos_orders_data_2025'] = pos_orders_data_2025
         st.session_state['pos_data_available'] = True
-    except Exception as e:
-        # Try Excel format if CSV fails
-        try:
-            pos_file_path = "POS_Orders_Data_2025.xlsx"
-            st.info(f"Loading POS data from file: {pos_file_path}")
-            pos_orders_data_2025 = pd.read_excel(pos_file_path)
-            st.success(f"✅ Successfully loaded POS data from Excel file")
-            # Set flag indicating POS data is available
-            st.session_state['pos_orders_data_2025'] = pos_orders_data_2025
-            st.session_state['pos_data_available'] = True
-        except Exception as e:
-            st.warning(f"Could not load POS data: {e}")
-            pos_orders_data_2025 = None
+    else:
+        # Silently set flag without warning
+        st.session_state['pos_data_available'] = False
 
     # Data Preparation: Combine P&L Sheets
     try:
@@ -489,14 +489,17 @@ def load_and_prepare_data():
                 # Store in session state for future use
                 st.session_state['pl_data'] = pl_combined_data
             else:
-                st.error("Error merging P&L data: Unit ID mismatch.")
+                # Log error to console instead of showing in UI
+                print("Error merging P&L data: Unit ID mismatch.")
                 pl_combined_data = None
         else:
             available_sheets = ", ".join(list(pl_data.keys()))
-            st.error(f"Error: One or more required P&L sheets not found. Required sheets: P&L_Details, P&L_Mapping, P&L_Units. Available sheets: {available_sheets}")
+            # Log error to console instead of showing in UI
+            print(f"Error: One or more required P&L sheets not found. Required sheets: P&L_Details, P&L_Mapping, P&L_Units. Available sheets: {available_sheets}")
             pl_combined_data = None
     except Exception as e:
-        st.error(f"An error occurred during data preparation: {e}")
+        # Log error to console instead of showing in UI
+        print(f"An error occurred during data preparation: {e}")
         pl_combined_data = None
 
     return pl_combined_data
@@ -1027,6 +1030,19 @@ else:
         <h2>What's on your mind today?</h2>
     """, unsafe_allow_html=True)
 
+    # Example questions - moved up to be right after "What's on your mind today?"
+    st.markdown("""
+        <h3>Ask Anything. Literally.</h3>
+        <p>Natural language queries supported:</p>
+        <ul>
+            <li>"What was our labor cost as a % of sales last month?"</li>
+            <li>"Compare March and February subsidy."</li>
+            <li>"Which Food Hall has the highest product cost?"</li>
+            <li>"Show trends in transaction count by daypart."</li>
+            <li>"Forecast April sales based on Q1 trends."</li>
+        </ul>
+    """, unsafe_allow_html=True)
+
     with st.container(): # Use a container to help with layout
         st.markdown("<div class='ask-container'>", unsafe_allow_html=True)
         
@@ -1042,30 +1058,10 @@ else:
         # Update session state if the input changes
         if specific_question != st.session_state.specific_question:
              st.session_state.specific_question = specific_question
-        
-        # Add Run Analysis button prominently below the input
-        st.markdown("<div style='margin-top: 15px; text-align: center;'>", unsafe_allow_html=True)
-        analyze_button = st.button("🚀 Run Financial Analysis", use_container_width=True, key="run_analysis_button_main")
-        st.markdown("</div>", unsafe_allow_html=True)
              
         st.markdown("</div>", unsafe_allow_html=True) # Close ask-container
 
     st.markdown("</div>", unsafe_allow_html=True) # Close chat-container
-    
-    # Example questions 
-    st.markdown("""
-    <div class="chat-container">
-        <h3>Ask Anything. Literally.</h3>
-        <p>Natural language queries supported:</p>
-        <ul>
-            <li>"What was our labor cost as a % of sales last month?"</li>
-            <li>"Compare March and February subsidy."</li>
-            <li>"Which Food Hall has the highest product cost?"</li>
-            <li>"Show trends in transaction count by daypart."</li>
-            <li>"Forecast April sales based on Q1 trends."</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
     
     # Prebuilt Smart Questions section
     st.markdown("""
@@ -1101,6 +1097,11 @@ else:
         if st.button("Which month has the highest labor cost as a percentage of sales", key="q4_button", use_container_width=True):
             set_smart_question("Which month has the highest labor cost as a percentage of sales")
             st.rerun()  # Force a rerun to trigger analysis
+    
+    # Add Run Analysis button after smart questions
+    st.markdown("<div style='margin-top: 15px; text-align: center;'>", unsafe_allow_html=True)
+    analyze_button = st.button("🚀 Run", use_container_width=True, key="run_analysis_button_main")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Footer with powered by
     st.markdown("""
@@ -1167,37 +1168,13 @@ else:
 
     # Display initial state (data overview or error) in the results_area
     elif pl_combined_data is not None and st.session_state.get('initial_display', True):
-        # Display initial overview in the results area
-        with st.session_state.results_area:
-            # Wrap initial overview in a card
-            st.markdown("<div class='results-card'>", unsafe_allow_html=True)
-            st.markdown("<h3>P&L Data Overview</h3>", unsafe_allow_html=True)
-            st.markdown("<p style='color: #5a6e84; line-height: 1.6;'>Data loaded successfully. Ask a specific question above or click 'Run Financial Analysis' to generate insights.</p>", unsafe_allow_html=True)
-            st.dataframe(pl_combined_data.head(), use_container_width=True)
-
-            # Show summary stats
-            st.markdown("<h4 style='font-size: 1.1rem; font-weight: 600; color: #33475b; margin-top: 1.5rem; margin-bottom: 0.8rem;'>Data Summary</h4>", unsafe_allow_html=True)
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                total_units = pl_combined_data['UnitId'].nunique()
-                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_units}</div><div class='kpi-label'>Total Units</div></div>", unsafe_allow_html=True)
-            with col2:
-                min_date = pl_combined_data['Month'].min().strftime('%b %Y')
-                max_date = pl_combined_data['Month'].max().strftime('%b %Y')
-                date_range = f"{min_date} - {max_date}"
-                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{date_range}</div><div class='kpi-label'>Date Range</div></div>", unsafe_allow_html=True)
-            with col3:
-                total_rows = len(pl_combined_data)
-                st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_rows:,}</div><div class='kpi-label'>Total Records</div></div>", unsafe_allow_html=True)
-            # Close the initial overview card
-            st.markdown("</div>", unsafe_allow_html=True)
-
+        # Leave the results area empty until user runs an analysis
+        pass
+        
     # Handle data loading failure state
     elif pl_combined_data is None:
         with st.session_state.results_area:
             st.error("Data could not be loaded or prepared. Please check the P&L file format and ensure it contains the required sheets: P&L_Details, P&L_Mapping, and P&L_Units.")
-            # Add a tip about expected file format
-            st.info("P&L and POS data are loaded automatically from files in the application directory.")
 
 
 
